@@ -892,7 +892,12 @@ namespace RabbitMQ.Client.Framing.Impl
 
         private void RecoverQueues()
         {
-            lock (_recordedQueues)
+            /*
+             * TODO LRB
+             * This does not exactly match the Java code. In the Java client, a copy of this data is made,
+             * then used for iteration
+             */
+            lock (_recordedEntitiesLock)
             {
                 foreach (KeyValuePair<string, RecordedQueue> pair in _recordedQueues)
                 {
@@ -904,34 +909,37 @@ namespace RabbitMQ.Client.Framing.Impl
                         rq.Recover();
                         string newName = rq.Name;
 
-                        // Make sure server-named queues are re-added with
-                        // their new names.
-                        // We only remove old name after we've updated the bindings and consumers,
-                        // plus only for server-named queues, both to make sure we don't lose
-                        // anything to recover. MK.
-                        PropagateQueueNameChangeToBindings(oldName, newName);
-                        PropagateQueueNameChangeToConsumers(oldName, newName);
-                        // see rabbitmq/rabbitmq-dotnet-client#43
-                        if (rq.IsServerNamed)
+                        if (!oldName.Equals(newName))
                         {
-                            DeleteRecordedQueue(oldName);
-                        }
-                        RecordQueue(newName, rq);
-
-                        if (_queueNameChange != null)
-                        {
-                            foreach (EventHandler<QueueNameChangedAfterRecoveryEventArgs> h in _queueNameChange.GetInvocationList())
+                            // Make sure server-named queues are re-added with
+                            // their new names.
+                            // We only remove old name after we've updated the bindings and consumers,
+                            // plus only for server-named queues, both to make sure we don't lose
+                            // anything to recover. MK.
+                            PropagateQueueNameChangeToBindings(oldName, newName);
+                            PropagateQueueNameChangeToConsumers(oldName, newName);
+                            // see rabbitmq/rabbitmq-dotnet-client#43
+                            if (rq.IsServerNamed)
                             {
-                                try
+                                DeleteRecordedQueue(oldName);
+                            }
+                            RecordQueue(newName, rq);
+
+                            if (_queueNameChange != null)
+                            {
+                                foreach (EventHandler<QueueNameChangedAfterRecoveryEventArgs> h in _queueNameChange.GetInvocationList())
                                 {
-                                    var eventArgs = new QueueNameChangedAfterRecoveryEventArgs(oldName, newName);
-                                    h(this, eventArgs);
-                                }
-                                catch (Exception e)
-                                {
-                                    var args = new CallbackExceptionEventArgs(e);
-                                    args.Detail["context"] = "OnQueueRecovery";
-                                    _delegate.OnCallbackException(args);
+                                    try
+                                    {
+                                        var eventArgs = new QueueNameChangedAfterRecoveryEventArgs(oldName, newName);
+                                        h(this, eventArgs);
+                                    }
+                                    catch (Exception e)
+                                    {
+                                        var args = new CallbackExceptionEventArgs(e);
+                                        args.Detail["context"] = "OnQueueRecovery";
+                                        _delegate.OnCallbackException(args);
+                                    }
                                 }
                             }
                         }
